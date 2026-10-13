@@ -50,53 +50,55 @@
 
 ## 실행 방법
 
-```bash
-pip install -r code/requirements.txt
+프로젝트 폴더(이 README가 있는 곳)에서 아래 4개 스크립트를 순서대로 실행합니다. 각 스크립트는 파일 위치를 기준으로 경로를 찾으므로 어느 폴더에서 실행해도 됩니다.
 
-python code/build_features.py   # data/interim → data/final_dataset_with_reviews.csv (약 10초)
-python code/cox_analysis.py     # data/final_dataset_with_reviews.csv → outputs/ (약 30초)
+```bash
+pip install -r requirements.txt
+
+python code/01_preprocess.py       # 원자료 → data/interim/final_restaurant_level_dataset.csv   (약 1분)
+python code/02_attach_reviews.py   # + 리뷰 요약 변수 → data/interim/restaurants_with_reviews_raw.csv
+python code/03_build_features.py   # + 경쟁·네트워크 변수 → data/final_dataset_with_reviews.csv (약 10초)
+python code/04_cox_analysis.py     # 생존분석 → outputs/                                        (약 30초)
 ```
 
-두 스크립트는 저장소에 포함된 `data/interim/restaurants_with_reviews_raw.csv`만으로 실행되며, 실행할 때마다 같은 결과를 냅니다.
-그 앞 단계(원자료 전처리, 리뷰 수집)는 아래 [전체 파이프라인](#전체-파이프라인)을 참고하세요.
+| 단계 | 정상 실행 확인 |
+|---|---|
+| 1 | `최종 데이터 shape: (3775, 33)` |
+| 2 | `리뷰 매칭 1,395개 (37.0%)` |
+| 3 | `저장: data/final_dataset_with_reviews.csv (3,775행 × 51열)` |
+| 4 | `완료: outputs/tables, outputs/figures, outputs/results_summary.md` |
+
+- 저장소에 포함된 원자료만으로 처음부터 끝까지 실행되며, 결과는 7주차 보고서의 수치와 일치합니다.
+- 좌표가 없는 점포의 Kakao 지오코딩 결과는 `data/interim/geocode_cache.csv`에 저장되어 있어 API 키 없이 실행됩니다. 캐시에 없는 9개 점포(지오코딩 실패)는 좌표 결측으로 제외됩니다. 다시 지오코딩하려면 `export KAKAO_REST_API_KEY="..."` 후 실행합니다.
+- `code/01_preprocess.py`의 `PAPER_VERSION = True`는 보고서 분석 데이터를 재현하는 설정입니다. 보고서 분석 당시 업태 매핑표에는 5개 업태(통닭(치킨), 외국음식전문점, 식육(숯불구이), 김밥(도시락), 탕류(보신용); 194곳)가 없었고, 상권 매출은 공식 상권 밖 점포에도 IDW로 보간했습니다. `False`로 바꾸면 최신 매핑표를 쓰고 상권 밖 점포는 보간하지 않습니다(결과 수치가 달라짐).
 
 ## 폴더 구성
 
 ```
 code/
-  build_features.py          분석용 데이터 생성: 열 이름 정리, 임대료 범주, 반경 경쟁 변수, 경쟁 네트워크 변수
-  cox_analysis.py            Kaplan-Meier, Cox 모형(반경·네트워크), 강건성 검토, 그림·표·요약 저장
-  naver_crawling_cohort.py   영업 점포를 한 곳씩 네이버 지도에서 검색 → 주소 검증 → 리뷰 수집
-  make_hints.py              미매칭 점포의 place_id 힌트 생성
-  combine_parts.py           나눠서 수집한 part 파일 합치기
-  review_merge.py            리뷰 → 점포별 요약 변수 3개 → 데이터셋에 결합
-  diagnose_search.py         검색 실패 원인 진단용
-  requirements.txt
-notebooks/
-  preprocessing_submission.ipynb   인허가·상권·매출·임대료 원자료 전처리
+  01_preprocess.py           1단계: 인허가·상권·매출·임대료 원자료 → 점포 단위 데이터
+  02_attach_reviews.py       2단계: 네이버 리뷰 요약 변수 결합
+  03_build_features.py       3단계: 열 이름 정리, 임대료 범주, 반경 경쟁 변수, 경쟁 네트워크 변수
+  04_cox_analysis.py         4단계: Kaplan-Meier, Cox 모형(반경·네트워크), 강건성 검토, 그림·표·요약
+  review_collection/         네이버 리뷰 수집 기록 (분석 실행에는 필요 없음)
+    naver_crawling_cohort.py   영업 점포를 한 곳씩 네이버 지도에서 검색 → 주소 검증 → 리뷰 수집
+    combine_parts.py           나눠서 수집한 part 파일 합치기
+    review_merge.py            리뷰 → 점포별 요약 변수 (review_features.csv의 원천)
 data/
-  interim/restaurants_with_reviews_raw.csv   전처리 + 리뷰 결합 결과 (build_features.py 입력)
-  final_dataset_with_reviews.csv             분석용 최종 데이터 (점포 1행, 3,775행 × 51열)
-  naver_match_results.csv                    인허가 점포 ↔ 네이버 매장 매칭 결과
+  raw/                       원자료 (csv는 zip으로 압축, 코드가 그대로 읽음)
+  interim/
+    geocode_cache.csv                   Kakao 지오코딩 결과 캐시 (1단계 입력)
+    review_features.csv                 리뷰 요약 변수, 1,395개 점포 (2단계 입력)
+    naver_match_results.csv             인허가 점포 ↔ 네이버 매장 매칭 기록
+    final_restaurant_level_dataset.csv  1단계 결과
+    restaurants_with_reviews_raw.csv    2단계 결과
+  final_dataset_with_reviews.csv        3단계 결과: 분석용 최종 데이터 (3,775행 × 51열)
 outputs/
-  results_summary.md                         전체 결과 요약 (표 형식)
-  tables/                                    결과 표 (CSV)
-  figures/                                   그림 (PNG)
+  results_summary.md         전체 결과 요약
+  tables/                    결과 표 (CSV)
+  figures/                   그림 (PNG)
+requirements.txt
 ```
-
-## 전체 파이프라인
-
-```
-원자료 (서울 열린데이터광장, 성동구 임대료, Kakao 좌표)
-  └─ notebooks/preprocessing_submission.ipynb   → final_restaurant_level_dataset.csv
-       └─ code/naver_crawling_cohort.py → combine_parts.py → review_merge.py
-            → data/interim/restaurants_with_reviews_raw.csv
-                 └─ code/build_features.py       → data/final_dataset_with_reviews.csv
-                      └─ code/cox_analysis.py     → outputs/
-```
-
-- 노트북은 원자료 폴더를 환경변수 `SEONGDONG_RAW_DIR`(기본값 `data/raw`)에서, Kakao API 키를 `KAKAO_REST_API_KEY`에서 읽습니다. 원자료와 API 키는 저장소에 포함하지 않습니다.
-- 리뷰 수집은 `python -m playwright install chromium` 후 실행합니다.
 
 ## 변수 설명 (`data/final_dataset_with_reviews.csv`)
 
@@ -128,7 +130,7 @@ outputs/
 - 이웃은 기준일에 영업 중인 표본 점포이며, 자기 자신은 제외합니다.
 - 거리는 EPSG:5186 평면좌표로 계산합니다.
 - 경쟁 네트워크는 점포를 노드로, 반경 r 안의 같은 업태 점포 쌍을 엣지로 둡니다. 같은 건물(0m) 쌍은 거리를 10m로 봅니다.
-- 원자료의 `rent_mean`, `duration_months`, `restaurants_all_300m`, `competitors_same_300m`은 최종 데이터에서 제외했습니다. 300m 변수는 위 기준으로 다시 계산했으며 기존 값과 92–97% 정확히 일치합니다(나머지는 경계의 ±1 차이).
+- 원자료의 `rent_mean`, `duration_months`, `restaurants_all_300m`, `competitors_same_300m`은 최종 데이터에서 제외했습니다. 300m 변수는 위 기준으로 반경 4개 모두 다시 계산했습니다.
 
 ## 결과 파일 (`outputs/`)
 
@@ -153,6 +155,7 @@ HR 단위: C·BIZ는 10곳, R은 10%p, 네트워크 지표는 표준편차 1(매
 | 생존(종속) | 성동구 일반음식점 인허가 정보 | 서울 열린데이터광장 |
 | 상권·매출 | 상권분석서비스 상권영역·점포·추정매출 (2021Q1) | 서울 열린데이터광장 |
 | 임대료 | 성동구 상가임대료 (2021Q1) | 성동구 |
+| 업태 매핑 | 인허가 업태 → 서울시 서비스 업종 매핑표 | 직접 작성 |
 | 좌표 보완 | Kakao Local API | Kakao |
 | 리뷰 | 네이버 지도 플레이스 방문자 리뷰 | 직접 수집 (2026.10) |
 
@@ -160,4 +163,4 @@ HR 단위: C·BIZ는 10곳, R은 10%p, 네트워크 지표는 표준편차 1(매
 
 - 하루 20곳 이상이 폐업 처리된 날이 4번(2022-09-13, 2022-11-29, 2022-12-15, 2025-03-12; 총 190곳) 있어 행정상 일괄 정리로 보고, 이 점포들을 제외한 강건성 검토를 함께 제시합니다.
 - 리뷰 변수는 관찰 종료 시점의 영업 점포에만 있으므로 생존 모형에는 넣지 않고, 영업 점포 대상 확장 분석에만 사용합니다.
-- `data/`에는 점포 단위 요약 변수만 포함됩니다.
+- 상권 매출은 상권×업종 매출이 직접 관측되지 않은 972곳(상권 밖 689곳 포함) 중 944곳을 1km 이내 동일 업종 상권 매출의 역거리가중(IDW) 보간으로 채웠고(`data/interim/final_restaurant_level_dataset.csv`의 `sales_source`), 업종 미분류 780곳과 보간 불가 28곳은 결측(분석에서는 결측 더미)으로 둡니다.

@@ -1,14 +1,16 @@
 """
 네이버 리뷰 -> 리뷰 요약 3열 -> final_restaurant_level_dataset.csv 결합
 
-출력 restaurants_with_reviews_raw.csv  -> data/interim/ 에 두고 code/build_features.py 로 최종 분석 데이터를 만든다.
+출력 restaurants_with_reviews_raw.csv
+   이 결과에서 리뷰 열(place_id, match_status, shared_place, review_*)만 뽑아 저장한 것이
+   data/interim/review_features.csv 이며, 분석 파이프라인은 code/02_attach_reviews.py 로 이 파일을 붙인다.
 
   review_volume        : log(1 + 방문자 리뷰 총수)                 얼마나 많이 찾나 (수요)
   review_segment       : 리뷰 태그의 주된 동행·목적 (연인/친구/가족/업무/혼자)  누가 오나 (손님층)
   review_revisit_share : 'N번째 방문'이 2 이상인 리뷰 비율              단골이 있나 (충성도)
 
-사용법 (part 파일들을 종류별로 하나로 합친 뒤):
-    python3 review_merge.py cohort_reviews_all.csv cohort_restaurants_all.csv final_restaurant_level_dataset.csv
+사용법 (data/interim 에서, combine_parts.py 로 part 파일들을 종류별로 하나로 합친 뒤):
+    python3 ../../code/review_collection/review_merge.py cohort_reviews_all.csv cohort_restaurants_all.csv final_restaurant_level_dataset.csv
     (예전 동 키워드 방식 파일도 그대로 넣으면 자동으로 주소+상호명 매칭)
 """
 import re

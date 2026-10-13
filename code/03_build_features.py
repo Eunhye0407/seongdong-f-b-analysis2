@@ -1,12 +1,11 @@
 """
-분석용 최종 데이터셋 생성: 열 이름 정리 + 임대료 범주 + 반경 경쟁 변수 + 경쟁 네트워크 변수
+3단계: 분석용 최종 데이터셋 생성: 열 이름 정리 + 임대료 범주 + 반경 경쟁 변수 + 경쟁 네트워크 변수
 
-입력  data/interim/restaurants_with_reviews_raw.csv
-      (notebooks/preprocessing_submission.ipynb 결과에 code/review_merge.py로 리뷰 요약을 붙인 파일)
+입력  data/interim/restaurants_with_reviews_raw.csv   (code/02_attach_reviews.py 결과)
 출력  data/final_dataset_with_reviews.csv   점포 1행, 3,775행
       outputs/tables/variable_summary.csv  주요 변수 기술통계
 
-실행  python code/build_features.py
+실행  python code/03_build_features.py   → 다음 단계: code/04_cox_analysis.py
 
 변수 정의 (반경 r = 100, 200, 300, 500m, 기준일 2021-04-01에 영업 중인 이웃 기준)
   competitor_c_{r}m   같은 업태 이웃 수                       (Competitor_C)

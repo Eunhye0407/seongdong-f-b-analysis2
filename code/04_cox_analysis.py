@@ -1,10 +1,10 @@
 """
-생존분석: Kaplan-Meier → 반경 경쟁 Cox 모형(H1–H3) → 경쟁 네트워크 Cox 모형(H4) → 강건성 검토
+4단계 생존분석: Kaplan-Meier → 반경 경쟁 Cox 모형(H1–H3) → 경쟁 네트워크 Cox 모형(H4) → 강건성 검토
 
-입력  data/final_dataset_with_reviews.csv      (code/build_features.py 결과)
+입력  data/final_dataset_with_reviews.csv      (code/03_build_features.py 결과)
 출력  outputs/tables/*.csv, outputs/figures/*.png, outputs/results_summary.md
 
-실행  python code/cox_analysis.py
+실행  python code/04_cox_analysis.py
 
 모형 (모든 모형 공통: 통제 변수 Z + 상권 단위 군집 강건 표준오차, Efron 동점 처리)
   모형 A  h(t) = h0(t)·exp(β1·C + β2·BIZ + γ'Z)              동종 이웃 수 C와 전체 음식점 수 BIZ

@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
 
 # %% [markdown]
-# # 성동구 일반음식점 생존분석 데이터 전처리
+# # 1단계: 성동구 일반음식점 생존분석 데이터 전처리
 #
-# 본 노트북은 **2021년 1분기(Q1)의 입지·상권 환경을 기준 변수로 사용**하고,
+# 입력  data/raw/          인허가·업태 매핑·상권 영역(shp)·점포/추정매출(2021)·상가임대료
+#       data/interim/geocode_cache.csv   좌표 결측 점포의 Kakao 지오코딩 결과(재실행 시 API 호출 생략)
+# 출력  data/interim/final_restaurant_level_dataset.csv  (점포 1행, 3,775행)
+# 실행  python code/01_preprocess.py   → 다음 단계: code/02_attach_reviews.py
+#
+# 이 스크립트는 **2021년 1분기(Q1)의 입지·상권 환경을 기준 변수로 사용**하고,
 # **2021-04-01부터 2026-09-12까지 음식점 폐업을 추적**하기 위한 음식점 단위 분석 데이터를 구축한다.
 #
 # ### 처리 순서
@@ -39,14 +44,11 @@ import requests
 
 from pyproj import Transformer
 
+import zipfile
+
 # 경로: 이 파일(code/) 기준으로 프로젝트 루트를 찾는다 → 어디서 실행해도 동작
-ROOT = Path(__file__).resolve().parent.parent if "__file__" in globals() else Path.cwd().parent
-# 원자료 폴더: data/raw 또는 data/raw data (다른 곳에 두었다면 환경변수 SEONGDONG_RAW_DIR로 지정)
-if "SEONGDONG_RAW_DIR" in os.environ:
-    DATA_DIR = Path(os.environ["SEONGDONG_RAW_DIR"])
-else:
-    DATA_DIR = next((p for p in [ROOT / "data" / "raw", ROOT / "data" / "raw data"] if p.exists()),
-                    ROOT / "data" / "raw")
+ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = Path(os.environ.get("SEONGDONG_RAW_DIR", ROOT / "data" / "raw"))   # 원자료 (csv 또는 csv.zip)
 INTERIM_DIR = ROOT / "data" / "interim"
 INTERIM_DIR.mkdir(parents=True, exist_ok=True)
 GEOCODE_CACHE = INTERIM_DIR / "geocode_cache.csv"   # Kakao 지오코딩 결과 캐시
@@ -54,15 +56,25 @@ GEOCODE_CACHE = INTERIM_DIR / "geocode_cache.csv"   # Kakao 지오코딩 결과 
 BASELINE_DATE = pd.Timestamp("2021-04-01")
 STUDY_END_DATE = pd.Timestamp("2026-09-12")
 
+# 7주차 보고서(논문 초안) 분석 데이터를 그대로 재현하는 설정
+#  - 업태 매핑: 보고서 분석 당시 매핑표에는 아래 5개 업태가 없었다(이후 추가). 보고서의 '업종 미분류 780곳'은 이 기준.
+#  - 상권 매출 보간: 보고서 데이터는 공식 상권 밖 점포에도 1km 이내 동일 업종 상권 매출을 IDW로 보간했다.
+#  PAPER_VERSION = False 로 바꾸면 최신 매핑표를 쓰고, 상권 밖 점포의 매출은 보간하지 않는다(결과 수치가 달라짐).
+PAPER_VERSION = True
+MAPPING_ADDED_AFTER_PAPER = ["통닭(치킨)", "외국음식전문점(인도,태국등)", "식육(숯불구이)", "김밥(도시락)", "탕류(보신용)"]
+IMPUTE_SALES_OUTSIDE_AREA = PAPER_VERSION
+
 def normalized(text):
     return unicodedata.normalize("NFC", str(text))
 
 def find_file(*keywords, suffix=None):
-    """DATA_DIR에서 파일명을 NFC 정규화한 뒤 키워드가 모두 포함된 파일 1개를 찾는다."""
+    """DATA_DIR에서 파일명을 NFC 정규화한 뒤 키워드가 모두 포함된 파일 1개를 찾는다.
+    suffix='.csv'이면 압축 파일(.csv.zip)도 찾는다."""
     matches = []
     for p in DATA_DIR.iterdir():
         name = normalized(p.name)
-        if suffix is not None and p.suffix.lower() != suffix.lower():
+        if suffix is not None and not (name.lower().endswith(suffix.lower())
+                                       or name.lower().endswith(suffix.lower() + ".zip")):
             continue
         if all(keyword in name for keyword in keywords):
             matches.append(p)
@@ -74,6 +86,16 @@ def find_file(*keywords, suffix=None):
         )
     return matches[0]
 
+def read_raw_csv(path, **kwargs):
+    """csv 또는 csv 1개가 든 zip을 읽는다 (zip 안의 __MACOSX 항목은 무시)."""
+    if path.suffix.lower() != ".zip":
+        return pd.read_csv(path, **kwargs)
+    with zipfile.ZipFile(path) as zf:
+        members = [m for m in zf.namelist() if not m.startswith("__MACOSX") and m.lower().endswith(".csv")]
+        assert len(members) == 1, f"{path.name}: csv가 1개여야 합니다 {members}"
+        with zf.open(members[0]) as f:
+            return pd.read_csv(f, **kwargs)
+
 print("DATA_DIR:", DATA_DIR)
 
 # %% [markdown]
@@ -83,13 +105,13 @@ print("DATA_DIR:", DATA_DIR)
 restaurant_path = find_file("성동구", "일반음식점", "인허가", suffix=".csv")
 mapping_path = find_file("성동구_음식점_업태_서울상권서비스업종_매핑", suffix=".csv")
 
-restaurant = pd.read_csv(
+restaurant = read_raw_csv(
     restaurant_path,
     encoding="cp949",
     low_memory=False
 )
 
-mapping = pd.read_csv(
+mapping = read_raw_csv(
     mapping_path,
     encoding="utf-8-sig"
 )
@@ -140,6 +162,9 @@ print(
 # ## 3. 업태 Mapping Table 병합
 
 # %%
+if PAPER_VERSION:
+    mapping = mapping[~mapping["업태구분명"].isin(MAPPING_ADDED_AFTER_PAPER)]
+
 baseline_df = baseline_df.merge(
     mapping,
     on="업태구분명",
@@ -451,10 +476,10 @@ print(nearest_unique["distance_to_market"].describe())
 store_path = find_file("점포-상권", "2021", suffix=".csv")
 sales_path = find_file("추정매출-상권", "2021", suffix=".csv")
 
-store_df = pd.read_csv(
+store_df = read_raw_csv(
     store_path, encoding="cp949", low_memory=False
 )
-sales_df = pd.read_csv(
+sales_df = read_raw_csv(
     sales_path, encoding="cp949", low_memory=False
 )
 
@@ -596,15 +621,16 @@ print("Direct 매출환경 관측:", direct_sales.sum())
 # %% [markdown]
 # ## 9. 매출환경 결측 보완
 #
-# 공식 상권 내부이고 업종 매핑이 되었지만 해당 상권×업종의 매출이 없는 경우에만
-# **동일 업종의 매출 관측 상권**을 최대 1km 안에서 탐색한다.
+# 업종 매핑이 되었지만 해당 상권×업종의 매출이 없는 경우
+# **동일 업종의 매출 관측 상권**(중심점 기준)을 최대 1km 안에서 탐색한다.
 #
 # - 참조 상권 3개 이상: 가까운 3개 IDW
 # - 참조 상권 2개: 2개 IDW
 # - 참조 상권 1개: 최근접 1개
 # - 1km 이내 참조 없음: 결측 유지
 #
-# 공식 상권 밖 또는 업종 미매핑 음식점은 매출환경을 임의 추정하지 않는다.
+# 업종 미매핑 음식점은 매출환경을 추정하지 않는다.
+# 공식 상권 밖 음식점은 IMPUTE_SALES_OUTSIDE_AREA = True(보고서 버전)일 때만 같은 방식으로 보간한다.
 
 # %%
 # 성동구 55개 상권의 centroid
@@ -643,7 +669,7 @@ restaurant_merged["sales_source"] = np.where(
 )
 
 missing_mask = (
-    restaurant_merged["TRDAR_CD"].notna()
+    (restaurant_merged["TRDAR_CD"].notna() | IMPUTE_SALES_OUTSIDE_AREA)
     & restaurant_merged["서울시_서비스_업종_코드"].notna()
     & restaurant_merged["area_category_sales_per_store"].isna()
 )
@@ -746,7 +772,8 @@ restaurant_merged["sales_level_5"] = restaurant_merged.apply(
 restaurant_merged["sales_missing_reason"] = "available"
 
 restaurant_merged.loc[
-    restaurant_merged["TRDAR_CD"].isna(),
+    restaurant_merged["TRDAR_CD"].isna()
+    & restaurant_merged["area_category_sales_per_store_final"].isna(),
     "sales_missing_reason"
 ] = "outside_commercial_area"
 
@@ -756,8 +783,7 @@ restaurant_merged.loc[
 ] = "category_unmapped"
 
 restaurant_merged.loc[
-    restaurant_merged["TRDAR_CD"].notna()
-    & restaurant_merged["서울시_서비스_업종_코드"].notna()
+    missing_mask
     & restaurant_merged["area_category_sales_per_store_final"].isna(),
     "sales_missing_reason"
 ] = "no_reference_within_1km"
@@ -776,7 +802,7 @@ print(restaurant_merged["sales_level_5"].value_counts(dropna=False))
 # %%
 rent_path = find_file("성동구", "상가임대료", suffix=".csv")
 
-rent = pd.read_csv(
+rent = read_raw_csv(
     rent_path,
     encoding="cp949",
     low_memory=False

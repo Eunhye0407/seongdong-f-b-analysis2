@@ -7,8 +7,12 @@
   결과 : cohort_partK_restaurants.csv  (restaurant_id 1행: place_id, 매칭 상태, 리뷰 총수 ...)
          cohort_partK_reviews.csv      (리뷰 1행: restaurant_id, place_id, visit_count, meta_text ...)
 
-실행 :   cd data/interim
-        python3 ../../code/naver_crawling_cohort.py
+실행 :  cd data/interim          (입력 파일이 있는 폴더에서 실행, 결과도 이 폴더에 저장)
+        python3 ../../code/review_collection/naver_crawling_cohort.py         (전체를 혼자)
+        python3 ../../code/review_collection/naver_crawling_cohort.py 0 3     (3명이 나눠서: 0번째 몫)
+
+※ 리뷰 수집은 2026년 10월에 완료했다. 다시 수집하면 리뷰가 달라지므로 분석에는 수집 결과를 요약한
+  data/interim/review_features.csv 를 사용한다(code/02_attach_reviews.py). 이 폴더의 코드는 수집 과정 기록용이다.
 """
 import asyncio
 import hashlib
