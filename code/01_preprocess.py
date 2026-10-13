@@ -79,6 +79,10 @@ def find_file(*keywords, suffix=None):
         if all(keyword in name for keyword in keywords):
             matches.append(p)
 
+    # 같은 파일의 압축본(.csv.zip)과 압축을 푼 파일(.csv)이 함께 있으면 압축을 푼 파일을 쓴다
+    unzipped = {normalized(p.name) for p in matches if p.suffix.lower() != ".zip"}
+    matches = [p for p in matches if not (p.suffix.lower() == ".zip" and normalized(p.name)[:-4] in unzipped)]
+
     if len(matches) != 1:
         raise FileNotFoundError(
             f"검색 조건 {keywords}, suffix={suffix}에 해당하는 파일이 1개여야 합니다. "
