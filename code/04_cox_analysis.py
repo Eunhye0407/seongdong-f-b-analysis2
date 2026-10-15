@@ -14,6 +14,7 @@
   표본: Kaplan-Meier는 전체 점포, Cox 모형은 상권 매출이 관측된 점포만 사용한다.
         매출 결측(대부분 업종 미분류 점포)은 대입하거나 더미로 처리하지 않고 결측 그대로 두어 분석에서 제외한다.
   단위: C·BIZ 10곳, R 10%p, 네트워크 지표 표준편차 1 (매개중심성은 log 변환 후)
+  보완: 비례위험 가정 위반 신호가 있는 Competitor_R은 관찰 기간을 1년 단위로 나눈 시간가변 계수 모형으로 다시 추정한다.
 """
 from pathlib import Path
 import warnings
@@ -218,6 +219,50 @@ def robustness(df: pd.DataFrame, df_all: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def split_episodes(df: pd.DataFrame, cuts_days: list) -> pd.DataFrame:
+    """관찰 기간을 구간으로 나눈 계수과정(counting process) 자료: 점포 × 구간마다 1행, entry/exit/ev"""
+    edges = [0, *cuts_days, np.inf]
+    parts = []
+    for k, (a, b) in enumerate(zip(edges[:-1], edges[1:])):
+        e = df[df["duration_days"] > a].copy()
+        e["entry"], e["exit"] = a, np.minimum(e["duration_days"], b)
+        e["ev"] = ((e["duration_days"] <= b) & (e["event"] == 1)).astype(int)
+        e["period"] = k
+        parts.append(e)
+    return pd.concat(parts, ignore_index=True)
+
+
+def time_varying_r(df: pd.DataFrame) -> pd.DataFrame:
+    """Competitor_R의 비례위험 가정 보완: 모형 B에서 R의 계수를 관찰 1년 구간마다 따로 추정 (R × 구간)"""
+    cuts = [365, 730, 1095, 1460]
+    labels = ["1년차", "2년차", "3년차", "4년차", "5년차 이후"]
+    ep = split_episodes(df, cuts)
+    groups = pd.factorize(ep["cluster"])[0]
+    rows = []
+    for r in RADII:
+        r_col, b_col = f"x_competitor_r_{r}m", f"x_adjacent_biz_{r}m"
+        inter = pd.concat([(ep[r_col] * (ep["period"] == k)).rename(f"r_{k}") for k in range(len(labels))], axis=1)
+        X = pd.concat([ep[[b_col]], inter, controls(ep)], axis=1).astype(float)
+        res = PHReg(ep["exit"].to_numpy(), X.to_numpy(), status=ep["ev"].to_numpy(), entry=ep["entry"].to_numpy(),
+                    ties="efron").fit(groups=groups)
+        b, se, pv = (pd.Series(v, index=X.columns) for v in (res.params, res.bse, res.pvalues))
+        # 계수가 구간마다 같은지 Wald 검정 (H0: 모든 구간 계수 동일)
+        k = len(labels)
+        idx = [X.columns.get_loc(f"r_{j}") for j in range(k)]
+        C = np.zeros((k - 1, X.shape[1]))
+        for j in range(k - 1):
+            C[j, idx[j]], C[j, idx[j + 1]] = 1, -1
+        diff = C @ res.params
+        wald = float(diff @ np.linalg.inv(C @ res.cov_params() @ C.T) @ diff)
+        wald_p = stats.chi2.sf(wald, k - 1)
+        for j, lab in enumerate(labels):
+            c = f"r_{j}"
+            rows.append({"radius_m": r, "period": lab, "hr": np.exp(b[c]), "ci_low": np.exp(b[c] - 1.96 * se[c]),
+                         "ci_high": np.exp(b[c] + 1.96 * se[c]), "p": pv[c], "biz_hr": np.exp(b[b_col]),
+                         "equal_wald_chi2": wald, "equal_wald_df": k - 1, "equal_wald_p": wald_p})
+    return pd.DataFrame(rows)
+
+
 # ---------------------------------------------------------------- 그림
 def set_font() -> None:
     for path in font_manager.findSystemFonts():
@@ -279,7 +324,7 @@ def fmt(row) -> str:
     return f"{row.hr:.3f} ({row.ci_low:.3f}–{row.ci_high:.3f}){star}"
 
 
-def write_summary(df_all, df, km, radius, network, robust, full) -> None:
+def write_summary(df_all, df, km, radius, network, robust, full, tv) -> None:
     def pick(model, var, r):
         return radius[(radius.model == model) & (radius.variable == f"{var}_{r}m")].iloc[0]
     lines = [
@@ -321,7 +366,15 @@ def write_summary(df_all, df, km, radius, network, robust, full) -> None:
     for spec, g in robust.groupby("spec", sort=False):
         g = g.set_index("variable")
         lines.append(f"| {spec} | {g.n.iloc[0]:,} | {fmt(g.loc['adjacent_biz_300m'])} | {fmt(g.loc['competitor_r_300m'])} |")
-    lines += ["", f"일괄 폐업일: {', '.join(robust.attrs['bulk_dates'])} (전체 표본 기준 총 {robust.attrs['bulk_n']}곳)", ""]
+    lines += ["", f"일괄 폐업일: {', '.join(robust.attrs['bulk_dates'])} (전체 표본 기준 총 {robust.attrs['bulk_n']}곳)", "",
+              "## 6. 비례위험 가정 보완: Competitor_R 시간가변 계수 (모형 B, R × 관찰 1년 구간)", "",
+              "단위: R 10%p 증가당. 구간 계수가 모두 같은지 Wald 검정", "",
+              "| 반경 | " + " | ".join(tv.period.unique()) + " | 구간 동일성 Wald χ², p | BIZ HR |",
+              "|---" * (tv.period.nunique() + 3) + "|"]
+    for r, g in tv.groupby("radius_m"):
+        lines.append(f"| {r}m | " + " | ".join(fmt(x) for x in g.itertuples()) +
+                     f" | {g.equal_wald_chi2.iloc[0]:.1f} (df = {g.equal_wald_df.iloc[0]}), p = {g.equal_wald_p.iloc[0]:.3f} | {g.biz_hr.iloc[0]:.3f} |")
+    lines.append("")
     SUMMARY_PATH.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -356,7 +409,11 @@ def main() -> None:
     robust = robustness(df, add_model_vars(df_all.copy()))
     robust.to_csv(TABLE_DIR / "cox_robustness_300m.csv", index=False, encoding="utf-8-sig")
 
-    write_summary(df_all, df, km, radius, network, robust, full)
+    print("5) 비례위험 가정 보완 (Competitor_R 시간가변 계수)")
+    tv = time_varying_r(df)
+    tv.to_csv(TABLE_DIR / "cox_time_varying_r.csv", index=False, encoding="utf-8-sig")
+
+    write_summary(df_all, df, km, radius, network, robust, full, tv)
     print(f"완료: {TABLE_DIR.relative_to(ROOT)}, {FIG_DIR.relative_to(ROOT)}, {SUMMARY_PATH.relative_to(ROOT)}")
 
 

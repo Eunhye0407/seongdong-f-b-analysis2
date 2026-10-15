@@ -43,7 +43,7 @@
 
 - 반경 200m 음식점 수 상위 1/3 집단의 관찰 종료 시점 생존율은 64.6%로, 하위 1/3(49.2%)보다 15.4%p 높습니다(log-rank p < .001, 전체 3,775곳).
 - 결론은 임대료 처리 방식(범주형·연속형·동 고정효과), 매출 변수 제외(매출 결측 점포 포함 전체 3,775곳), 일괄 폐업일 제외, 표준오차 보정 방식에 관계없이 유지됩니다.
-- 비례위험 가정: Adjacent_BIZ와 네트워크의 기준이 되는 Competitor_C는 위반 없음(최소 p = .365, .073). 유의하지 않은 Competitor_R은 200·300·500m에서 p < .05로 위반 신호가 있습니다.
+- 비례위험 가정: Adjacent_BIZ와 Competitor_C는 위반 없음(최소 p = .365, .073). Competitor_R은 200·300·500m에서 위반 신호(p = .013–.032)가 있어, R의 계수를 관찰 1년 구간마다 따로 추정하는 시간가변 계수 모형으로 보완했습니다. R의 HR은 초기 1.00–1.06에서 4~5년차 0.91–0.98로 조금씩 낮아지지만 어느 구간에서도 5% 수준으로 유의하지 않고, 구간 간 차이도 유의하지 않습니다(Wald p = .054–.219). 따라서 "동종 비율은 폐업 위험과 관련이 없다"는 결론은 같고, BIZ의 HR도 그대로입니다(`outputs/results_summary.md` 6절).
 
 ### 7주차 보고서 대비 변경 (2026-10-16)
 
@@ -157,6 +157,7 @@ requirements.txt
 | `tables/cox_full_300m_model_b.csv` | 300m 모형 B 전체 계수 (통제 변수 포함) |
 | `tables/cox_network_models.csv` | 모형 C(모형 A + 네트워크 지표)의 HR, VIF, 우도비 검정, AIC, C-index |
 | `tables/cox_robustness_300m.csv` | 강건성 검토 6가지 설정 |
+| `tables/cox_time_varying_r.csv` | 비례위험 가정 보완: Competitor_R의 관찰 1년 구간별 HR, 구간 동일성 Wald 검정 |
 | `figures/fig_km_by_adjacent_biz_200m.png` | Kaplan-Meier 생존곡선 |
 | `figures/fig_forest_competition_by_radius.png` | 반경별 경쟁 변수 HR (1 SD당) |
 
