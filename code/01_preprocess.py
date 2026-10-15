@@ -9,7 +9,7 @@
 # 실행  python code/01_preprocess.py   → 다음 단계: code/02_attach_reviews.py
 #
 # 이 스크립트는 **2021년 1분기(Q1)의 입지·상권 환경을 기준 변수로 사용**하고,
-# **2021-04-01부터 2026-09-12까지 음식점 폐업을 추적**하기 위한 음식점 단위 분석 데이터를 구축한다.
+# **2021-04-01부터 2026-10-13까지 음식점 폐업을 추적**하기 위한 음식점 단위 분석 데이터를 구축한다.
 #
 # ### 처리 순서
 # 1. 일반음식점 인허가정보 로드
@@ -54,9 +54,10 @@ INTERIM_DIR.mkdir(parents=True, exist_ok=True)
 GEOCODE_CACHE = INTERIM_DIR / "geocode_cache.csv"   # Kakao 지오코딩 결과 캐시
 
 BASELINE_DATE = pd.Timestamp("2021-04-01")
-STUDY_END_DATE = pd.Timestamp("2026-09-12")
+# 관찰 종료일 = 인허가 데이터 추출일(최종수정일자 최댓값). 2026년 10월 추출본을 써서 네이버 리뷰 수집 시점(2026-10)과 맞췄다.
+STUDY_END_DATE = pd.Timestamp("2026-10-13")
 
-# 7주차 보고서(논문 초안) 분석 데이터를 그대로 재현하는 설정
+# 7주차 보고서(논문 초안)와 같은 전처리 설정 (관찰 종료일만 2026-09-12 → 2026-10-13으로 연장)
 #  - 업태 매핑: 보고서 분석 당시 매핑표에는 아래 5개 업태가 없었다(이후 추가). 보고서의 '업종 미분류 780곳'은 이 기준.
 #  - 상권 매출 보간: 보고서 데이터는 공식 상권 밖 점포에도 1km 이내 동일 업종 상권 매출을 IDW로 보간했다.
 #  PAPER_VERSION = False 로 바꾸면 최신 매핑표를 쓰고, 상권 밖 점포의 매출은 보간하지 않는다(결과 수치가 달라짐).
@@ -133,6 +134,13 @@ print("인허가 데이터:", restaurant.shape)
 print("Mapping Table:", mapping.shape)
 print("관리번호 중복:", restaurant["restaurant_id"].duplicated().sum())
 print("인허가일 결측:", restaurant["인허가일자"].isna().sum())
+
+# 관찰 종료일이 인허가 데이터 추출 시점과 맞는지 확인 (다른 시점의 인허가 파일로 바꾸면 STUDY_END_DATE도 바꿔야 한다)
+last_update = pd.to_datetime(restaurant["최종수정일자"], errors="coerce").max().normalize()
+print("인허가 데이터 최종수정일:", last_update.date(), "| 관찰 종료일:", STUDY_END_DATE.date())
+assert restaurant["폐업일자"].max() <= STUDY_END_DATE, "관찰 종료일 이후의 폐업일이 있습니다. STUDY_END_DATE를 확인하세요."
+if last_update != STUDY_END_DATE:
+    print("  ※ 관찰 종료일과 인허가 데이터 추출일이 다릅니다. 새 인허가 파일이면 STUDY_END_DATE를 바꾸세요.")
 
 # %% [markdown]
 # ## 2. Baseline 시점 영업 음식점 추출
@@ -1009,7 +1017,7 @@ print(
 # ## 13. Duration, Event 생성
 #
 # - 추적 시작: 2021-04-01
-# - 관찰 종료: 2026-09-12
+# - 관찰 종료: 2026-10-13 (인허가 데이터 추출일)
 # - 관찰기간 중 폐업: `event = 1`
 # - 관찰 종료일까지 폐업 미관측: `event = 0`
 # - `duration`: baseline부터 폐업일 또는 관찰종료일까지의 기간

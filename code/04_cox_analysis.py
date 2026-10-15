@@ -10,7 +10,9 @@
   모형 A  h(t) = h0(t)·exp(β1·C + β2·BIZ + γ'Z)              동종 이웃 수 C와 전체 음식점 수 BIZ
   모형 B  h(t) = h0(t)·exp(β1·R + β2·BIZ + γ'Z)              C 대신 동종 비율 R (R = C/BIZ라 따로 추정)
   모형 C  h(t) = h0(t)·exp(β'K + δ'N + γ'Z)                   모형 A + 네트워크 지표 N (H4: 증분 설명력)
-  통제 변수 Z: 업력, 임대료 수준(low/mid/high, 기준 low), log 상권 점포당 매출 + 결측 더미, 업태 더미(기준 한식)
+  통제 변수 Z: 업력, 임대료 수준(low/mid/high, 기준 low), log 상권 점포당 매출, 업태 더미(기준 한식)
+  표본: Kaplan-Meier는 전체 점포, Cox 모형은 상권 매출이 관측된 점포만 사용한다.
+        매출 결측(대부분 업종 미분류 점포)은 대입하거나 더미로 처리하지 않고 결측 그대로 두어 분석에서 제외한다.
   단위: C·BIZ 10곳, R 10%p, 네트워크 지표 표준편차 1 (매개중심성은 log 변환 후)
 """
 from pathlib import Path
@@ -36,6 +38,7 @@ SUMMARY_PATH = ROOT / "outputs" / "results_summary.md"
 
 RADII = [100, 200, 300, 500]
 BASELINE = pd.Timestamp("2021-04-01")
+STUDY_END = pd.Timestamp("2026-10-13")             # 관찰 종료일 = 인허가 데이터 추출일 (01_preprocess.py와 동일)
 REOPEN_DATE = pd.Timestamp("2022-04-18")       # 사회적 거리두기 해제일
 BULK_CLOSURE_MIN = 20                          # 하루 20곳 이상 폐업 처리된 날 = 일괄 정리 의심
 UNIT = {"competitor_c": 10, "adjacent_biz": 10, "competitor_r": 0.1}
@@ -47,14 +50,21 @@ LABEL = {"competitor_c": "Competitor_C", "adjacent_biz": "Adjacent_BIZ", "compet
 def load_data() -> pd.DataFrame:
     df = pd.read_csv(DATA_PATH, encoding="utf-8-sig", parse_dates=["closure_date"])
     df["category_name"] = df["category_name"].fillna("미분류")
-    log_sales = np.log(df["area_sales_per_store"])
-    df["sales_missing"] = log_sales.isna().astype(int)
-    df["log_sales"] = log_sales.fillna(log_sales.median())
+    df["log_sales"] = np.log(df["area_sales_per_store"])      # 결측은 결측 그대로 둔다
     df["log_rent"] = np.log(df["rent_median"])
     # 군집: 공식 상권 코드, 상권 밖 점포는 법정동 단위로 묶음
     df["cluster"] = np.where(df["trdar_code"].notna(),
                              df["trdar_code"].astype("Int64").astype(str), "out_" + df["dong"])
-    # 회귀용 스케일 변환
+    return df
+
+
+def cox_sample(df: pd.DataFrame) -> pd.DataFrame:
+    """Cox 분석 표본: 상권 매출(log_sales)이 결측인 점포를 제외하고 회귀용 변수를 만든다."""
+    return add_model_vars(df[df["log_sales"].notna()].copy())
+
+
+def add_model_vars(df: pd.DataFrame) -> pd.DataFrame:
+    """회귀용 스케일 변환 (표준화는 주어진 표본 기준)"""
     for r in RADII:
         for v, u in UNIT.items():
             df[f"x_{v}_{r}m"] = df[f"{v}_{r}m"] / u
@@ -68,9 +78,9 @@ def zscore(s: pd.Series) -> pd.Series:
     return (s - s.mean()) / s.std()
 
 
-def controls(df: pd.DataFrame, rent: str = "level") -> pd.DataFrame:
-    """통제 변수 행렬. rent: 'level'(범주, 본 모형) | 'log'(연속) | 'dong'(동 고정효과)"""
-    parts = [df[["business_age_years", "log_sales", "sales_missing"]]]
+def controls(df: pd.DataFrame, rent: str = "level", sales: bool = True) -> pd.DataFrame:
+    """통제 변수 행렬. rent: 'level'(범주, 본 모형) | 'log'(연속) | 'dong'(동 고정효과), sales: log 매출 포함 여부"""
+    parts = [df[["business_age_years", "log_sales"] if sales else ["business_age_years"]]]
     if rent == "level":
         parts.append(pd.get_dummies(df["rent_level"], prefix="rent").drop(columns="rent_low"))
     elif rent == "log":
@@ -183,29 +193,28 @@ def variance_inflation(X: pd.DataFrame) -> pd.Series:
     return pd.Series(np.diag(inv), index=[c.removeprefix("x_") for c in X.columns])
 
 
-def robustness(df: pd.DataFrame) -> pd.DataFrame:
-    """300m 모형 B를 설정을 바꿔 다시 추정"""
+def robustness(df: pd.DataFrame, df_all: pd.DataFrame) -> pd.DataFrame:
+    """300m 모형 B를 설정을 바꿔 다시 추정. df = Cox 표본, df_all = 매출 결측 점포를 포함한 전체 표본"""
     cols = ["x_competitor_r_300m", "x_adjacent_biz_300m"]
-    vc = df["closure_date"].value_counts()
+    vc = df_all["closure_date"].value_counts()             # 일괄 폐업일은 전체 점포 기준으로 찾는다
     bulk_dates = vc[vc >= BULK_CLOSURE_MIN].index
     cases = [
-        ("본 모형 (임대료 범주형)", df, "level", True),
-        ("임대료 연속형 log(rent_median)", df, "log", True),
-        ("동 고정효과 (임대료 대신)", df, "dong", True),
-        ("상권 매출 관측 점포만", df[df["area_sales_per_store"].notna()], "level", True),
-        ("업종 미분류 점포 제외", df[df["category_code"].notna()], "level", True),
-        (f"일괄 폐업일(하루 {BULK_CLOSURE_MIN}곳 이상) 점포 제외", df[~df["closure_date"].isin(bulk_dates)], "level", True),
-        ("일반 표준오차 (군집 미보정)", df, "level", False),
+        ("본 모형 (임대료 범주형)", df, "level", True, True),
+        ("임대료 연속형 log(rent_median)", df, "log", True, True),
+        ("동 고정효과 (임대료 대신)", df, "dong", True, True),
+        ("매출 변수 제외 (매출 결측 점포 포함 전체)", df_all, "level", True, False),
+        (f"일괄 폐업일(하루 {BULK_CLOSURE_MIN}곳 이상) 점포 제외", df[~df["closure_date"].isin(bulk_dates)], "level", True, True),
+        ("일반 표준오차 (군집 미보정)", df, "level", False, True),
     ]
     rows = []
-    for name, d, rent, robust in cases:
-        fit = fit_cox(d, pd.concat([d[cols], controls(d, rent)], axis=1), robust=robust)
+    for name, d, rent, robust, sales in cases:
+        fit = fit_cox(d, pd.concat([d[cols], controls(d, rent, sales)], axis=1), robust=robust)
         for c in cols:
             rows.append({"spec": name, "n": len(d), "events": int(d["event"].sum()),
                          "variable": c.removeprefix("x_"), **fit["coef"].loc[c].to_dict()})
     out = pd.DataFrame(rows)
     out.attrs["bulk_dates"] = [str(x.date()) for x in bulk_dates]
-    out.attrs["bulk_n"] = int(df["closure_date"].isin(bulk_dates).sum())
+    out.attrs["bulk_n"] = int(df_all["closure_date"].isin(bulk_dates).sum())
     return out
 
 
@@ -270,13 +279,15 @@ def fmt(row) -> str:
     return f"{row.hr:.3f} ({row.ci_low:.3f}–{row.ci_high:.3f}){star}"
 
 
-def write_summary(df, km, radius, network, robust, full) -> None:
+def write_summary(df_all, df, km, radius, network, robust, full) -> None:
     def pick(model, var, r):
         return radius[(radius.model == model) & (radius.variable == f"{var}_{r}m")].iloc[0]
     lines = [
         "# 분석 결과 요약", "",
-        f"- 표본: {len(df):,}개 점포, 폐업 {int(df.event.sum()):,}건 ({df.event.mean():.1%}), 관찰 2021-04-01 ~ 2026-09-12",
-        "- 모든 Cox 모형: 업력, 임대료 수준(low/mid/high), log 상권 매출 + 결측 더미, 업태 더미 통제, "
+        f"- 전체 표본(Kaplan-Meier): {len(df_all):,}개 점포, 폐업 {int(df_all.event.sum()):,}건 ({df_all.event.mean():.1%}), "
+        f"관찰 {BASELINE.date()} ~ {STUDY_END.date()}",
+        f"- Cox 표본: 상권 매출 결측 {len(df_all) - len(df):,}곳 제외 → {len(df):,}개 점포, 폐업 {int(df.event.sum()):,}건 ({df.event.mean():.1%})",
+        "- 모든 Cox 모형: 업력, 임대료 수준(low/mid/high), log 상권 매출, 업태 더미 통제, "
         f"상권 단위 군집 강건 표준오차({df.cluster.nunique()}개 군집)",
         "- 표기: HR (95% CI), *** p<.001 ** p<.01 * p<.05 † p<.10", "",
         "## 1. Kaplan-Meier: 반경 200m 음식점 수 3분위", "",
@@ -290,7 +301,9 @@ def write_summary(df, km, radius, network, robust, full) -> None:
         *[f"| {r}m | {fmt(pick('A','competitor_c',r))} | {fmt(pick('A','adjacent_biz',r))} | {fmt(pick('B','competitor_r',r))} | "
           f"{fmt(pick('B','adjacent_biz',r))} | {pick('A','competitor_c',r).c_index:.3f} / {pick('B','competitor_r',r).c_index:.3f} | "
           f"{pick('B','adjacent_biz',r).hr_per_sd:.2f} |" for r in RADII],
-        "", f"비례위험 가정(Schoenfeld 잔차 vs log t): 경쟁 변수 최소 p = {radius.ph_p.min():.3f}", "",
+        "", "비례위험 가정(Schoenfeld 잔차 vs log t) 최소 p: "
+        + ", ".join(f"{LABEL[v]} {radius[radius.variable.str.startswith(v)].ph_p.min():.3f}"
+                    for v in ["competitor_c", "adjacent_biz", "competitor_r"]), "",
         "## 3. 경쟁 네트워크 변수 (H4, 모형 C = 모형 A + 네트워크 지표)", "",
         "단위: 네트워크 지표 표준편차 1 증가당 (매개중심성은 log 변환 후)", "",
         "| 반경 | 연결강도 | 매개중심성 | 군집계수 | LR χ²(3), p | AIC (A → C) | C-index (A → C) |",
@@ -308,7 +321,7 @@ def write_summary(df, km, radius, network, robust, full) -> None:
     for spec, g in robust.groupby("spec", sort=False):
         g = g.set_index("variable")
         lines.append(f"| {spec} | {g.n.iloc[0]:,} | {fmt(g.loc['adjacent_biz_300m'])} | {fmt(g.loc['competitor_r_300m'])} |")
-    lines += ["", f"일괄 폐업일: {', '.join(robust.attrs['bulk_dates'])} (총 {robust.attrs['bulk_n']}곳)", ""]
+    lines += ["", f"일괄 폐업일: {', '.join(robust.attrs['bulk_dates'])} (전체 표본 기준 총 {robust.attrs['bulk_n']}곳)", ""]
     SUMMARY_PATH.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -317,11 +330,13 @@ def main() -> None:
     TABLE_DIR.mkdir(parents=True, exist_ok=True)
     FIG_DIR.mkdir(parents=True, exist_ok=True)
     set_font()
-    df = load_data()
-    print(f"표본 {len(df):,}개, 폐업 {int(df.event.sum()):,}건, 군집 {df.cluster.nunique()}개")
+    df_all = load_data()
+    df = cox_sample(df_all)
+    print(f"전체 {len(df_all):,}개 (폐업 {int(df_all.event.sum()):,}건) | "
+          f"Cox 표본 {len(df):,}개 (매출 결측 {len(df_all) - len(df):,}곳 제외, 폐업 {int(df.event.sum()):,}건, 군집 {df.cluster.nunique()}개)")
 
-    print("1) Kaplan-Meier")
-    km = km_analysis(df)
+    print("1) Kaplan-Meier (전체 표본)")
+    km = km_analysis(df_all)
     km.to_csv(TABLE_DIR / "km_by_adjacent_biz_200m.csv", index=False, encoding="utf-8-sig")
 
     print("2) 반경 경쟁 Cox 모형 (모형 A·B × 4개 반경)")
@@ -338,10 +353,10 @@ def main() -> None:
     network.to_csv(TABLE_DIR / "cox_network_models.csv", index=False, encoding="utf-8-sig")
 
     print("4) 강건성 검토")
-    robust = robustness(df)
+    robust = robustness(df, add_model_vars(df_all.copy()))
     robust.to_csv(TABLE_DIR / "cox_robustness_300m.csv", index=False, encoding="utf-8-sig")
 
-    write_summary(df, km, radius, network, robust, full)
+    write_summary(df_all, df, km, radius, network, robust, full)
     print(f"완료: {TABLE_DIR.relative_to(ROOT)}, {FIG_DIR.relative_to(ROOT)}, {SUMMARY_PATH.relative_to(ROOT)}")
 
 
