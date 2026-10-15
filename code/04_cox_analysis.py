@@ -204,6 +204,7 @@ def robustness(df: pd.DataFrame, df_all: pd.DataFrame) -> pd.DataFrame:
         ("임대료 연속형 log(rent_median)", df, "log", True, True),
         ("동 고정효과 (임대료 대신)", df, "dong", True, True),
         ("매출 변수 제외 (매출 결측 점포 포함 전체)", df_all, "level", True, False),
+        ("300m 음식점 수 상위 5% 점포 제외 (초밀집 건물·상가)", df[df["adjacent_biz_300m"] <= df["adjacent_biz_300m"].quantile(0.95)], "level", True, True),
         (f"일괄 폐업일(하루 {BULK_CLOSURE_MIN}곳 이상) 점포 제외", df[~df["closure_date"].isin(bulk_dates)], "level", True, True),
         ("일반 표준오차 (군집 미보정)", df, "level", False, True),
     ]
