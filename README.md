@@ -71,6 +71,7 @@ python code/01_preprocess.py       # 원자료 → data/interim/final_restaurant
 python code/02_attach_reviews.py   # + 리뷰 요약 변수 → data/interim/restaurants_with_reviews_raw.csv
 python code/03_build_features.py   # + 경쟁·네트워크 변수 → data/final_dataset_with_reviews.csv (약 10초)
 python code/04_cox_analysis.py     # 생존분석 → outputs/                                        (약 30초)
+python code/05_sd_review_scenarios.py  # (탐색적) 리뷰 평판 시나리오 SD → outputs/sd/
 ```
 
 | 단계 | 정상 실행 확인 |
@@ -181,3 +182,4 @@ HR 단위: C·BIZ는 10곳, R은 10%p, 네트워크 지표는 표준편차 1(매
 - 하루 20곳 이상이 폐업 처리된 날이 4번(2022-09-13, 2022-11-29, 2022-12-15, 2025-03-12; 총 190곳) 있어 행정상 일괄 정리로 보고, 이 점포들을 제외한 강건성 검토를 함께 제시합니다.
 - 리뷰 변수는 관찰 종료 시점의 영업 점포에만 있으므로 생존 모형에는 넣지 않고, 영업 점포 대상 확장 분석에만 사용합니다. 리뷰 수집 대상은 수집 당시의 9월 12일 인허가 기준 영업 점포 2,119곳이었고, 관찰 종료 시점(10월 13일) 영업 점포 2,098곳 중 2,097곳이 이 대상에 포함됩니다(1곳은 10월 자료에서 폐업 취소). 이 중 1,389곳(66.2%)이 네이버 리뷰와 매칭되었으며, 수집 대상 중 10월 13일까지 폐업한 22곳(리뷰 매칭 6곳)은 폐업으로 처리됩니다.
 - 상권 매출은 상권×업종 매출이 직접 관측되지 않은 971곳(상권 밖 688곳 포함) 중 943곳을 1km 이내 동일 업종 상권 매출의 역거리가중(IDW) 보간으로 채웠고(`data/interim/final_restaurant_level_dataset.csv`의 `sales_source`), 업종 미분류 780곳과 보간 불가 28곳은 결측 그대로 두고 Cox 분석에서 제외합니다(매출 변수를 뺀 전체 표본 모형은 강건성 검토에 제시).
+- 5단계 SD(`code/05_sd_review_scenarios.py`)는 성동구 17개 동 단위로 2026~2030년 영업 점포 수를 예측합니다. 폐업률에 Cox의 Adjacent_BIZ 계수를 반영하고, 리뷰 평판 점수(`data/interim/restaurant_review_scores.csv`, 2026년 10월 수집)는 진입(η)·폐업(γ)과의 연결 강도를 가정한 민감도 시나리오로만 사용합니다. 리뷰 점수는 2026년 생존 점포에서만 관측되어 Cox 모형에는 넣지 않습니다.
